@@ -1,0 +1,6 @@
+{
+  "name": "Finance Tracker",
+  "description": "Log transactions, set monthly budgets, categorize spending, and track fuel expenses and visual trends.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
