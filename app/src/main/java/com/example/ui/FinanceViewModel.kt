@@ -16,6 +16,23 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val database = AppDatabase.getDatabase(application)
     private val repository = FinanceRepository(database.financeDao())
 
+    private val sharedPrefs = application.getSharedPreferences("finance_prefs", android.content.Context.MODE_PRIVATE)
+
+    val userNameFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("user_name", "Explorer") ?: "Explorer")
+    val userEmailFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("user_email", "raghulice7@gmail.com") ?: "raghulice7@gmail.com")
+    val userWantsSummaryFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getBoolean("user_wants_summary", true))
+
+    fun updateProfile(name: String, email: String, wantsSummary: Boolean) {
+        sharedPrefs.edit()
+            .putString("user_name", name)
+            .putString("user_email", email)
+            .putBoolean("user_wants_summary", wantsSummary)
+            .apply()
+        userNameFlow.value = name
+        userEmailFlow.value = email
+        userWantsSummaryFlow.value = wantsSummary
+    }
+
     val transactions: StateFlow<List<TransactionEntity>> = repository.allTransactions
         .stateIn(
             scope = viewModelScope,
@@ -52,9 +69,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 prepopulateDatabase()
             }
 
-            // Seed sample pending SMS transaction to make the review flow instantly interactable and previewable
-            val existingPending = repository.allPendingTransactions.first()
-            if (existingPending.isEmpty()) {
+            // Seed sample pending SMS transactions ONLY ONCE using a persistent preference flag
+            val hasSeededSms = sharedPrefs.getBoolean("pending_sms_seeded", false)
+            if (!hasSeededSms) {
                 repository.insertPendingTransaction(
                     PendingSmsTransactionEntity(
                         amount = 450.0,
@@ -77,6 +94,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         payeeOrMerchant = "Chai Tapri"
                     )
                 )
+                sharedPrefs.edit().putBoolean("pending_sms_seeded", true).apply()
             }
         }
     }
@@ -89,11 +107,19 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         repository.insertBudget(BudgetEntity("Fuel / Gas", 8000.0))
         repository.insertBudget(BudgetEntity("Shopping", 8000.0))
 
-        val cal = Calendar.getInstance()
+        // Seed 3 past months + current month (total 4 months of records)
+        for (i in 3 downTo 0) {
+            seedMonthData(i)
+        }
+    }
 
-        // Default transactions
-        // Income
-        cal.add(Calendar.DAY_OF_YEAR, -5)
+    private suspend fun seedMonthData(monthsAgo: Int) {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.MONTH, -monthsAgo)
+        val monthLabel = getMonthName(cal.get(Calendar.MONTH))
+
+        // 1st of the month: Salary (INCOME)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
         repository.insertTransaction(
             TransactionEntity(
                 amount = 75000.0,
@@ -101,12 +127,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = "Salary",
                 payeeOrSource = "Acme Corp Salary",
                 dateMillis = cal.timeInMillis,
-                note = "Monthly salary direct deposit"
+                note = "Monthly salary deposit for $monthLabel"
             )
         )
 
-        // Expenses
-        cal.add(Calendar.DAY_OF_YEAR, 1)
+        // 3rd of the month: House Rent
+        cal.set(Calendar.DAY_OF_MONTH, 3)
+        repository.insertTransaction(
+            TransactionEntity(
+                amount = 12000.0,
+                type = "EXPENSE",
+                category = "Rent / Utilities",
+                payeeOrSource = "Avenue Heights Rent",
+                dateMillis = cal.timeInMillis,
+                note = "Apartment Rent for $monthLabel"
+            )
+        )
+
+        // 5th of the month: Electricity & Water Utilities
+        cal.set(Calendar.DAY_OF_MONTH, 5)
         repository.insertTransaction(
             TransactionEntity(
                 amount = 2500.0,
@@ -114,55 +153,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = "Rent / Utilities",
                 payeeOrSource = "City Power & Water",
                 dateMillis = cal.timeInMillis,
-                note = "Electricity and water bill"
+                note = "$monthLabel Utility bill"
             )
         )
 
-        cal.add(Calendar.DAY_OF_YEAR, 1)
-        repository.insertTransaction(
-            TransactionEntity(
-                amount = 3500.0,
-                type = "EXPENSE",
-                category = "Groceries",
-                payeeOrSource = "Supermarket Fresh",
-                dateMillis = cal.timeInMillis,
-                note = "Weekly grocery stocking"
-            )
-        )
-
-        cal.add(Calendar.DAY_OF_YEAR, 1)
-        repository.insertTransaction(
-            TransactionEntity(
-                amount = 1800.0,
-                type = "EXPENSE",
-                category = "Food & Dining",
-                payeeOrSource = "Bella Italia Restaurant",
-                dateMillis = cal.timeInMillis,
-                note = "Dinner with family"
-            )
-        )
-
-        cal.add(Calendar.DAY_OF_YEAR, 1)
-        repository.insertTransaction(
-            TransactionEntity(
-                amount = 4500.0,
-                type = "EXPENSE",
-                category = "Shopping",
-                payeeOrSource = "Apparel Mall",
-                dateMillis = cal.timeInMillis,
-                note = "New autumn coat"
-            )
-        )
-
-        // Fuel Entries & corresponding Fuel Transactions for Car
-        cal.add(Calendar.DAY_OF_YEAR, 1)
-        val fuelId = repository.insertFuelEntry(
+        // 7th of the month: Car Refuel 1
+        cal.set(Calendar.DAY_OF_MONTH, 7)
+        val carOdo1 = 11300.0 + (3 - monthsAgo) * 1200.0
+        val fuelId1 = repository.insertFuelEntry(
             FuelEntryEntity(
                 amountPaid = 2800.0,
                 volumeLiters = 31.0,
-                odometerReading = 12500.0,
+                odometerReading = carOdo1,
                 dateMillis = cal.timeInMillis,
-                note = "Gas station fuel refuel",
+                note = "Highway Petrol Pump",
                 vehicleType = "CAR"
             )
         )
@@ -173,41 +177,59 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = "Fuel / Gas",
                 payeeOrSource = "Car Refuel",
                 dateMillis = cal.timeInMillis,
-                note = "[Fuel Log #$fuelId] Refueled (Car) 31.0L at Odometer 12,500.0 km"
+                note = "[Fuel Log #$fuelId1] Refueled (Car) 31.0L at Odometer $carOdo1 km ($monthLabel)"
             )
         )
 
-        cal.add(Calendar.DAY_OF_YEAR, 1)
-        val fuelId2 = repository.insertFuelEntry(
-            FuelEntryEntity(
-                amountPaid = 3200.0,
-                volumeLiters = 35.0,
-                odometerReading = 13100.0,
-                dateMillis = cal.timeInMillis,
-                note = "National Highway Hub",
-                vehicleType = "CAR"
-            )
-        )
+        // 10th of the month: Weekly Groceries
+        cal.set(Calendar.DAY_OF_MONTH, 10)
         repository.insertTransaction(
             TransactionEntity(
                 amount = 3200.0,
                 type = "EXPENSE",
-                category = "Fuel / Gas",
-                payeeOrSource = "Car Refuel",
+                category = "Groceries",
+                payeeOrSource = "Supermarket Fresh",
                 dateMillis = cal.timeInMillis,
-                note = "[Fuel Log #$fuelId2] Refueled (Car) 35.0L at Odometer 13,100.0 km"
+                note = "Monthly grocery stock 1"
             )
         )
 
-        // Let's seed a Bike refuel log too to highlight the split feature beautifully!
-        cal.add(Calendar.DAY_OF_YEAR, -1)
-        val fuelId3 = repository.insertFuelEntry(
+        // 14th of the month: Dinner / Food outing
+        cal.set(Calendar.DAY_OF_MONTH, 14)
+        repository.insertTransaction(
+            TransactionEntity(
+                amount = 1800.0,
+                type = "EXPENSE",
+                category = "Food & Dining",
+                payeeOrSource = "Bella Italia Restaurant",
+                dateMillis = cal.timeInMillis,
+                note = "Weekend dinner"
+            )
+        )
+
+        // 18th of the month: Shopping / Apparel
+        cal.set(Calendar.DAY_OF_MONTH, 18)
+        repository.insertTransaction(
+            TransactionEntity(
+                amount = 4500.0,
+                type = "EXPENSE",
+                category = "Shopping",
+                payeeOrSource = "Fashion Arcade Hub",
+                dateMillis = cal.timeInMillis,
+                note = "Apparel shopping"
+            )
+        )
+
+        // 20th of the month: Bike Refuel
+        cal.set(Calendar.DAY_OF_MONTH, 20)
+        val bikeOdo = 3800.0 + (3 - monthsAgo) * 300.0
+        val fuelId2 = repository.insertFuelEntry(
             FuelEntryEntity(
                 amountPaid = 400.0,
                 volumeLiters = 4.2,
-                odometerReading = 4100.0,
+                odometerReading = bikeOdo,
                 dateMillis = cal.timeInMillis,
-                note = "City Fuels Bike Station",
+                note = "Express fuels local pump",
                 vehicleType = "BIKE"
             )
         )
@@ -218,9 +240,50 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = "Fuel / Gas",
                 payeeOrSource = "Bike Refuel",
                 dateMillis = cal.timeInMillis,
-                note = "[Fuel Log #$fuelId3] Refueled (Bike) 4.2L at Odometer 4,100.0 km"
+                note = "[Fuel Log #$fuelId2] Refueled (Bike) 4.2L at Odometer $bikeOdo km ($monthLabel)"
             )
         )
+
+        // 22nd of the month: Car Refuel 2
+        cal.set(Calendar.DAY_OF_MONTH, 22)
+        val carOdo2 = carOdo1 + 450.0
+        val fuelId3 = repository.insertFuelEntry(
+            FuelEntryEntity(
+                amountPaid = 3200.0,
+                volumeLiters = 35.0,
+                odometerReading = carOdo2,
+                dateMillis = cal.timeInMillis,
+                note = "Highway Petrol Pump",
+                vehicleType = "CAR"
+            )
+        )
+        repository.insertTransaction(
+            TransactionEntity(
+                amount = 3200.0,
+                type = "EXPENSE",
+                category = "Fuel / Gas",
+                payeeOrSource = "Car Refuel",
+                dateMillis = cal.timeInMillis,
+                note = "[Fuel Log #$fuelId3] Refueled (Car) 35.0L at Odometer $carOdo2 km ($monthLabel)"
+            )
+        )
+
+        // 25th of the month: Weekly Groceries 2
+        cal.set(Calendar.DAY_OF_MONTH, 25)
+        repository.insertTransaction(
+            TransactionEntity(
+                amount = 3500.0,
+                type = "EXPENSE",
+                category = "Groceries",
+                payeeOrSource = "Local Corner Store",
+                dateMillis = cal.timeInMillis,
+                note = "Monthly grocery stock 2"
+            )
+        )
+    }
+
+    private fun getMonthName(month: Int): String {
+        return listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[month]
     }
 
     fun addTransaction(
@@ -242,6 +305,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     note = note
                 )
             )
+        }
+    }
+
+    fun updateTransaction(transaction: TransactionEntity) {
+        viewModelScope.launch {
+            repository.insertTransaction(transaction)
         }
     }
 
@@ -298,6 +367,45 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     note = if (note.isBlank()) transactionNote else "$note ($transactionNote)"
                 )
             )
+        }
+    }
+
+    fun updateFuelEntry(
+        id: Int,
+        amountPaid: Double,
+        volumeLiters: Double,
+        odometerReading: Double,
+        note: String,
+        vehicleType: String,
+        dateMillis: Long
+    ) {
+        viewModelScope.launch {
+            val updatedEntry = FuelEntryEntity(
+                id = id,
+                amountPaid = amountPaid,
+                volumeLiters = volumeLiters,
+                odometerReading = odometerReading,
+                dateMillis = dateMillis,
+                note = note,
+                vehicleType = vehicleType
+            )
+            repository.insertFuelEntry(updatedEntry)
+
+            // Find matching transaction by checking notes prefix [Fuel Log #ID]
+            val txs = repository.allTransactions.first()
+            val match = txs.find { it.category == "Fuel / Gas" && it.note.contains("[Fuel Log #$id]") }
+            if (match != null) {
+                val modeName = if (vehicleType == "BIKE") "Bike" else "Car"
+                val transactionNote = "[Fuel Log #$id] Refueled ($modeName) ${volumeLiters}L at Odometer $odometerReading"
+                repository.insertTransaction(
+                    match.copy(
+                        amount = amountPaid,
+                        payeeOrSource = "$modeName Refuel",
+                        dateMillis = dateMillis,
+                        note = if (note.isBlank()) transactionNote else "$note ($transactionNote)"
+                    )
+                )
+            }
         }
     }
 

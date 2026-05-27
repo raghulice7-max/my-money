@@ -15,16 +15,20 @@ import java.util.regex.Pattern
 class SmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
-            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
-            for (sms in messages) {
-                val body = sms.messageBody ?: continue
-                val sender = sms.originatingAddress ?: "Unknown"
+        try {
+            if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+                val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
+                if (messages.isEmpty()) return
 
-                Log.d("SmsReceiver", "Received SMS from $sender: $body")
+                val sender = messages[0].originatingAddress ?: "Unknown"
+                val fullBody = messages.joinToString(separator = "") { it.messageBody ?: "" }
+
+                if (fullBody.isBlank()) return
+
+                Log.d("SmsReceiver", "Received SMS from $sender: $fullBody")
 
                 // Parse SMS body
-                val parsedTx = parseSms(body)
+                val parsedTx = parseSms(fullBody)
                 if (parsedTx != null) {
                     val pendingResult = goAsync()
                     CoroutineScope(Dispatchers.IO).launch {
@@ -35,7 +39,7 @@ class SmsReceiver : BroadcastReceiver() {
                                     amount = parsedTx.amount,
                                     type = parsedTx.type,
                                     senderAddress = sender,
-                                    messageBody = body,
+                                    messageBody = fullBody,
                                     dateMillis = System.currentTimeMillis(),
                                     initialCategory = parsedTx.guessedCategory,
                                     payeeOrMerchant = parsedTx.payeeOrMerchant
@@ -45,11 +49,17 @@ class SmsReceiver : BroadcastReceiver() {
                         } catch (e: Exception) {
                             Log.e("SmsReceiver", "Error saving pending transaction", e)
                         } finally {
-                            pendingResult.finish()
+                            try {
+                                pendingResult.finish()
+                            } catch (un: Exception) {
+                                Log.e("SmsReceiver", "Error finishing pending result", un)
+                            }
                         }
                     }
                 }
             }
+        } catch (e: Exception) {
+            Log.e("SmsReceiver", "Error inside SmsReceiver onReceive", e)
         }
     }
 
@@ -68,28 +78,46 @@ class SmsReceiver : BroadcastReceiver() {
             return null
         }
 
-        // Common transaction words to scan
-        val isExpense = lower.contains("debited") || 
+        val hasCreditCard = lower.contains("credit card")
+        val lowerWithoutCreditCard = if (hasCreditCard) lower.replace("credit card", "card") else lower
+
+        // Common transaction words to scan to determine expense vs income
+        val isExpense = lower.contains("debit") || 
+                        lower.contains("debited") ||
+                        lower.contains("spend") || 
                         lower.contains("spent") || 
                         lower.contains("paid") || 
+                        lower.contains("payment") || 
+                        lower.contains("pay") || 
                         lower.contains("sent") || 
-                        lower.contains("txn of") ||
-                        lower.contains("transferred to") ||
+                        lower.contains("txn") ||
+                        lower.contains("transaction") ||
+                        lower.contains("transfer") ||
                         lower.contains("withdrawn") ||
-                        lower.contains("charge")
+                        lower.contains("withdraw") ||
+                        lower.contains("withdrew") ||
+                        lower.contains("charge") ||
+                        lower.contains("purchase") ||
+                        lower.contains("bought")
                         
-        val isIncome = lower.contains("credited") || 
+        val isIncome = lowerWithoutCreditCard.contains("credit") || 
+                       lowerWithoutCreditCard.contains("credited") || 
+                       lower.contains("receive") || 
                        lower.contains("received") || 
+                       lower.contains("deposit") ||
                        lower.contains("deposited") ||
-                       lower.contains("reimbursement")
+                       lower.contains("reimburse") ||
+                       lower.contains("refund") ||
+                       lower.contains("salary") ||
+                       lower.contains("added")
 
         // Must be a clear credit/debit to avoid spam SMS
         if (!isExpense && !isIncome) {
             return null
         }
 
-        // Indian bank regex styles: "Rs 500", "Rs. 1,000.00", "INR 200"
-        val amountRegex = Pattern.compile("(?:rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE)
+        // Indian bank regex styles: "Rs 500", "Rs. 1,000.00", "INR 200", "₹ 450", "Rs.500"
+        val amountRegex = Pattern.compile("(?:rs\\.?|inr|₹)\\s*([\\d,]+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE)
         val matcher = amountRegex.matcher(body)
         if (!matcher.find()) {
             return null

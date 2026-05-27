@@ -26,18 +26,33 @@ import com.example.data.TransactionEntity
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalAnimationApi::class)
+@OptIn(ExperimentalAnimationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsTab(
     transactions: List<TransactionEntity>,
     onAddTransaction: (Double, String, String, String, String, Long) -> Unit,
     onDeleteTransaction: (TransactionEntity) -> Unit,
+    onUpdateTransaction: (TransactionEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
+    var transactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf("ALL") } // "ALL", "INCOME", "EXPENSE", "FUEL"
     var selectedCategoryFilter by remember { mutableStateOf("ALL") }
+    var selectedMonthFilter by remember { mutableStateOf("ALL") }
+
+    val monthsFormatter = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+    val monthFilterKeyFormatter = remember { SimpleDateFormat("yyyy-MM", Locale.getDefault()) }
+
+    val availableMonths = remember(transactions) {
+        val uniqueMonthKeys = transactions.map { tx ->
+            val date = Date(tx.dateMillis)
+            monthFilterKeyFormatter.format(date) to monthsFormatter.format(date)
+        }
+        val distinctOrdered = uniqueMonthKeys.distinctBy { it.first }.sortedByDescending { it.first }
+        listOf("ALL" to "All Months") + distinctOrdered
+    }
 
     // Filter logic
     val filteredTransactions = transactions.filter { tx ->
@@ -55,7 +70,13 @@ fun TransactionsTab(
 
         val matchesCategory = if (selectedCategoryFilter == "ALL") true else tx.category == selectedCategoryFilter
 
-        matchesSearch && matchesType && matchesCategory
+        val matchesMonth = if (selectedMonthFilter == "ALL") {
+            true
+        } else {
+            monthFilterKeyFormatter.format(Date(tx.dateMillis)) == selectedMonthFilter
+        }
+
+        matchesSearch && matchesType && matchesCategory && matchesMonth
     }
 
     Box(
@@ -174,6 +195,44 @@ fun TransactionsTab(
                             }
                         }
                     }
+
+                    // Month Filter Chips Row
+                    if (availableMonths.size > 2) {
+                        ScrollableTabRow(
+                            selectedTabIndex = availableMonths.indexOfFirst { it.first == selectedMonthFilter }.coerceAtLeast(0),
+                            edgePadding = 0.dp,
+                            containerColor = Color.Transparent,
+                            divider = {},
+                            indicator = {}
+                        ) {
+                            availableMonths.forEach { (key, display) ->
+                                val isSelected = selectedMonthFilter == key
+                                Tab(
+                                    selected = isSelected,
+                                    onClick = { selectedMonthFilter = key },
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                            )
+                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = display,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -219,11 +278,12 @@ fun TransactionsTab(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(filteredTransactions, key = { it.id }) { tx ->
+                    items(filteredTransactions, key = { tx -> "${tx.id}_${tx.dateMillis}_${tx.amount}" }) { tx ->
                         val style = FinanceCategory.getStyleFor(tx.category)
                         DeletableTransactionItem(
                             transaction = tx,
                             categoryStyle = style,
+                            onEdit = { transactionToEdit = tx },
                             onDelete = { onDeleteTransaction(tx) }
                         )
                     }
@@ -245,6 +305,244 @@ fun TransactionsTab(
         }
     }
 
+    // Edit Transaction Dialog Form
+    if (transactionToEdit != null) {
+        val editingTx = transactionToEdit!!
+        var txType by remember(editingTx) { mutableStateOf(editingTx.type) }
+        var amountText by remember(editingTx) { mutableStateOf(editingTx.amount.toString()) }
+        var payeeText by remember(editingTx) { mutableStateOf(editingTx.payeeOrSource) }
+        var selectedCategory by remember(editingTx) { mutableStateOf(editingTx.category) }
+        var notesText by remember(editingTx) { mutableStateOf(editingTx.note) }
+        var selectedDateMillis by remember(editingTx) { mutableStateOf(editingTx.dateMillis) }
+        var showDatePicker by remember { mutableStateOf(false) }
+
+        val sdf = remember { SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()) }
+        val dateText = sdf.format(Date(selectedDateMillis))
+
+        // Filter Categories based on Selected Type
+        val categoriesForType = FinanceCategory.categories.filter {
+            if (txType == "INCOME") !it.isExpense else it.isExpense && it.name != "Fuel / Gas"
+        }
+
+        // Auto selection on type switch
+        LaunchedEffect(txType) {
+            val isValid = categoriesForType.any { it.name == selectedCategory }
+            if (!isValid) {
+                selectedCategory = categoriesForType.firstOrNull()?.name ?: "Other"
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { transactionToEdit = null },
+            title = {
+                Text(
+                    text = "Edit Transaction",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Transparent),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Type Row Selection
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = { txType = "EXPENSE" },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (txType == "EXPENSE") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = if (txType == "EXPENSE") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Expense")
+                        }
+
+                        Button(
+                            onClick = { txType = "INCOME" },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (txType == "INCOME") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = if (txType == "INCOME") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Income")
+                        }
+                    }
+
+                    // Amount Text Box
+                    OutlinedTextField(
+                        value = amountText,
+                        onValueChange = { amountText = it },
+                        label = { Text("Amount (₹)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+
+                    // Payee / Source Text Box
+                    OutlinedTextField(
+                        value = payeeText,
+                        onValueChange = { payeeText = it },
+                        label = { Text(if (txType == "INCOME") "Source (From)" else "Payee (To)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text(if (txType == "INCOME") "Employer, Refund, Sale" else "Store name, Rent provider") },
+                        singleLine = true
+                    )
+
+                    // Clickable calendar date picker matching Fuel Tracker style
+                    if (showDatePicker) {
+                        CustomCalendarDatePicker(
+                            selectedDateMillis = selectedDateMillis,
+                            onDateSelected = { selected ->
+                                selectedDateMillis = selected
+                                showDatePicker = false
+                            },
+                            onDismiss = { showDatePicker = false }
+                        )
+                    }
+
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarToday,
+                                contentDescription = "Date",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Transaction Date",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .clickable { showDatePicker = true }
+                                .clip(RoundedCornerShape(8.dp)),
+                            color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                            border = CardDefaults.outlinedCardBorder()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = dateText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.CalendarMonth,
+                                    contentDescription = "Select Date",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Category selection dropdown
+                    var isCategoryMenuExpanded by remember { mutableStateOf(false) }
+                    Column {
+                        Text(
+                            text = "Category",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box {
+                            OutlinedButton(
+                                onClick = { isCategoryMenuExpanded = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(selectedCategory)
+                                    Icon(Icons.Default.KeyboardArrowDown, "Expand")
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = isCategoryMenuExpanded,
+                                onDismissRequest = { isCategoryMenuExpanded = false }
+                            ) {
+                                categoriesForType.forEach { style ->
+                                    DropdownMenuItem(
+                                        text = { Text(style.name) },
+                                        onClick = {
+                                            selectedCategory = style.name
+                                            isCategoryMenuExpanded = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(style.icon, style.name, tint = style.color, modifier = Modifier.size(18.dp))
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Notes text box
+                    OutlinedTextField(
+                        value = notesText,
+                        onValueChange = { notesText = it },
+                        label = { Text("Notes / Tags") },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("e.g. coffee, online") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amount = amountText.toDoubleOrNull()
+                        val payee = payeeText.ifBlank { if (txType == "INCOME") "Received Funds" else "General Expense" }
+                        if (amount != null && amount > 0) {
+                            onUpdateTransaction(
+                                editingTx.copy(
+                                    amount = amount,
+                                    type = txType,
+                                    category = selectedCategory,
+                                    payeeOrSource = payee,
+                                    note = notesText,
+                                    dateMillis = selectedDateMillis
+                                )
+                            )
+                            transactionToEdit = null
+                        }
+                    }
+                ) {
+                    Text("Save Changes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { transactionToEdit = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Add Transaction Dialog Form
     if (showAddDialog) {
         var txType by remember { mutableStateOf("EXPENSE") } // "EXPENSE", "INCOME"
@@ -252,6 +550,11 @@ fun TransactionsTab(
         var payeeText by remember { mutableStateOf("") }
         var selectedCategory by remember { mutableStateOf("") }
         var notesText by remember { mutableStateOf("") }
+        var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+        var showDatePicker by remember { mutableStateOf(false) }
+
+        val sdf = remember { SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()) }
+        val dateText = sdf.format(Date(selectedDateMillis))
 
         // Filter Categories based on Selected Type
         val categoriesForType = FinanceCategory.categories.filter {
@@ -328,6 +631,67 @@ fun TransactionsTab(
                         singleLine = true
                     )
 
+                    // Clickable calendar date picker matching Fuel Tracker style
+                    if (showDatePicker) {
+                        CustomCalendarDatePicker(
+                            selectedDateMillis = selectedDateMillis,
+                            onDateSelected = { selected ->
+                                selectedDateMillis = selected
+                                showDatePicker = false
+                            },
+                            onDismiss = { showDatePicker = false }
+                        )
+                    }
+
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarToday,
+                                contentDescription = "Date",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Transaction Date",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .clickable { showDatePicker = true }
+                                .clip(RoundedCornerShape(8.dp)),
+                            color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                            border = CardDefaults.outlinedCardBorder()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = dateText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.CalendarMonth,
+                                    contentDescription = "Select Date",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
                     // Category selection dropdown
                     Column {
                         Text("Category", style = MaterialTheme.typography.labelSmall)
@@ -390,7 +754,7 @@ fun TransactionsTab(
                                 selectedCategory,
                                 payee,
                                 notesText,
-                                System.currentTimeMillis()
+                                selectedDateMillis
                             )
                             showAddDialog = false
                         }
@@ -412,6 +776,7 @@ fun TransactionsTab(
 fun DeletableTransactionItem(
     transaction: TransactionEntity,
     categoryStyle: CategoryStyle,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -469,7 +834,7 @@ fun DeletableTransactionItem(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Amount and Delete combo
+            // Amount and Action combo
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.Center
@@ -483,18 +848,37 @@ fun DeletableTransactionItem(
                     style = MaterialTheme.typography.bodyMedium
                 )
 
-                IconButton(
-                    onClick = { showDeleteConfirmDialog = true },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .testTag("delete_transaction_button")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                        modifier = Modifier.size(18.dp)
-                    )
+                    IconButton(
+                        onClick = { onEdit() },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("edit_transaction_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit",
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { showDeleteConfirmDialog = true },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("delete_transaction_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
@@ -525,3 +909,5 @@ fun DeletableTransactionItem(
         )
     }
 }
+
+

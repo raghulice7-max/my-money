@@ -43,7 +43,11 @@ fun DashboardTab(
     modifier: Modifier = Modifier,
     pendingTransactions: List<PendingSmsTransactionEntity> = emptyList(),
     onApprovePending: (PendingSmsTransactionEntity, String, String, Double, String) -> Unit = { _, _, _, _, _ -> },
-    onDiscardPending: (PendingSmsTransactionEntity) -> Unit = {}
+    onDiscardPending: (PendingSmsTransactionEntity) -> Unit = {},
+    userName: String = "Explorer",
+    userEmail: String = "raghulice7@gmail.com",
+    userWantsSummary: Boolean = true,
+    onTriggerEmailSummary: () -> Unit = {}
 ) {
     var showBudgetDialog by remember { mutableStateOf(false) }
 
@@ -87,7 +91,7 @@ fun DashboardTab(
             ) {
                 Column {
                     Text(
-                        text = "Hello Explorer!",
+                        text = "Hello $userName!",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -214,6 +218,61 @@ fun DashboardTab(
             }
         }
 
+        // Month-End A.I. Summary Card (Interactive layout)
+        if (userWantsSummary) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onTriggerEmailSummary() }
+                        .testTag("month_end_summary_banner"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(MaterialTheme.colorScheme.secondary, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Send,
+                                contentDescription = "Summary Logo",
+                                tint = MaterialTheme.colorScheme.onSecondary
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "A.I. Month-End Report",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Draft, analyze & email report to $userEmail",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Proceed link",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+            }
+        }
+
         // Pending Transaction Reviews Section
         if (pendingTransactions.isNotEmpty() || !hasSmsPermission) {
             item {
@@ -236,7 +295,7 @@ fun DashboardTab(
             }
 
             if (pendingTransactions.isNotEmpty()) {
-                items(pendingTransactions, key = { it.id }) { pending ->
+                items(pendingTransactions, key = { pending -> "${pending.id}_${pending.dateMillis}" }) { pending ->
                     PendingSmsTransactionReviewCard(
                         pending = pending,
                         onApprove = { category, payee, amount, note ->
@@ -707,8 +766,15 @@ fun TransactionItem(
 }
 
 fun formatCurrency(amount: Double): String {
-    val format = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
-    return format.format(amount)
+    if (amount.isNaN() || amount.isInfinite()) {
+        return "₹0.00"
+    }
+    return try {
+        val format = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
+        format.format(amount)
+    } catch (e: Exception) {
+        "₹${String.format(Locale.US, "%.2f", amount)}"
+    }
 }
 
 // Custom SMS Review Components
@@ -781,13 +847,13 @@ fun PendingSmsTransactionReviewCard(
     onDiscard: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
+    var isExpanded by remember(pending.id) { mutableStateOf(false) }
 
     // Forms fields state
-    var editPayee by remember { mutableStateOf(pending.payeeOrMerchant) }
-    var editAmountStr by remember { mutableStateOf(pending.amount.toString()) }
-    var selectedCategory by remember { mutableStateOf(pending.initialCategory) }
-    var editNote by remember { mutableStateOf("") }
+    var editPayee by remember(pending.id) { mutableStateOf(pending.payeeOrMerchant) }
+    var editAmountStr by remember(pending.id) { mutableStateOf(pending.amount.toString()) }
+    var selectedCategory by remember(pending.id) { mutableStateOf(pending.initialCategory) }
+    var editNote by remember(pending.id) { mutableStateOf("") }
 
     val dateFormater = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
     val dateString = dateFormater.format(Date(pending.dateMillis))
@@ -1036,7 +1102,7 @@ fun PendingSmsTransactionReviewCard(
                         Button(
                             onClick = {
                                 val finalAmt = editAmountStr.toDoubleOrNull() ?: pending.amount
-                                val finalNote = editNote.ifBlank { "SMS Approved: ${pending.messageBody}" }
+                                val finalNote = editNote
                                 onApprove(selectedCategory, editPayee, finalAmt, finalNote)
                             },
                             shape = RoundedCornerShape(8.dp)
@@ -1067,7 +1133,7 @@ fun PendingSmsTransactionReviewCard(
                     }
                     Button(
                         onClick = {
-                            val finalNote = "SMS Approved: ${pending.messageBody}"
+                            val finalNote = ""
                             onApprove(selectedCategory, editPayee, pending.amount, finalNote)
                         },
                         modifier = Modifier.height(32.dp),
