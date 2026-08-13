@@ -4,11 +4,15 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.util.Calendar
 
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
@@ -22,6 +26,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val userEmailFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("user_email", "raghulice7@gmail.com") ?: "raghulice7@gmail.com")
     val userWantsSummaryFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getBoolean("user_wants_summary", true))
 
+    val appThemeFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("app_theme", "SYSTEM") ?: "SYSTEM")
+    val appFontFamilyFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("app_font_family", "DEFAULT") ?: "DEFAULT")
+    val appFontSizeFlow = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("app_font_size", "NORMAL") ?: "NORMAL")
+
     fun updateProfile(name: String, email: String, wantsSummary: Boolean) {
         sharedPrefs.edit()
             .putString("user_name", name)
@@ -31,6 +39,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         userNameFlow.value = name
         userEmailFlow.value = email
         userWantsSummaryFlow.value = wantsSummary
+    }
+
+    fun updateTheme(theme: String) {
+        sharedPrefs.edit().putString("app_theme", theme).apply()
+        appThemeFlow.value = theme
+    }
+
+    fun updateFontFamily(fontFamily: String) {
+        sharedPrefs.edit().putString("app_font_family", fontFamily).apply()
+        appFontFamilyFlow.value = fontFamily
+    }
+
+    fun updateFontSize(fontSize: String) {
+        sharedPrefs.edit().putString("app_font_size", fontSize).apply()
+        appFontSizeFlow.value = fontSize
     }
 
     val transactions: StateFlow<List<TransactionEntity>> = repository.allTransactions
@@ -61,12 +84,59 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             initialValue = emptyList()
         )
 
+    val investments: StateFlow<List<InvestmentEntity>> = repository.allInvestments
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val goals: StateFlow<List<GoalEntity>> = repository.allGoals
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val recurringReminders: StateFlow<List<RecurringReminderEntity>> = repository.allRecurringReminders
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     init {
         // Pre-populate database with default items if empty
         viewModelScope.launch {
             val existingTx = repository.allTransactions.first()
             if (existingTx.isEmpty()) {
                 prepopulateDatabase()
+            }
+
+            val existingReminders = repository.allRecurringReminders.first()
+            if (existingReminders.isEmpty()) {
+                repository.insertRecurringReminder(
+                    RecurringReminderEntity(
+                        name = "HDFC Index Mutual Fund SIP",
+                        amount = 5000.0,
+                        dayOfMonth = 5,
+                        type = "SIP",
+                        lastPaidDate = null,
+                        category = "Investment",
+                        notes = "Monthly equity investment"
+                    )
+                )
+                repository.insertRecurringReminder(
+                    RecurringReminderEntity(
+                        name = "SBI Recurring Deposit (RD)",
+                        amount = 3000.0,
+                        dayOfMonth = 15,
+                        type = "RD",
+                        lastPaidDate = null,
+                        category = "Savings",
+                        notes = "Emergency cash reserve"
+                    )
+                )
             }
 
             // Seed sample pending SMS transactions ONLY ONCE using a persistent preference flag
@@ -333,6 +403,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun clearAllTransactions() {
+        viewModelScope.launch {
+            repository.clearAllTransactions()
+        }
+    }
+
     fun addFuelEntry(
         amountPaid: Double,
         volumeLiters: Double,
@@ -489,4 +565,379 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             repository.deletePendingTransaction(pending)
         }
     }
+
+    fun syncSmsInbox(context: android.content.Context) {
+        viewModelScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val smsUri = android.net.Uri.parse("content://sms/inbox")
+                    val contentResolver = context.contentResolver
+                    val cursor = contentResolver.query(
+                        smsUri,
+                        arrayOf("address", "body", "date"),
+                        null,
+                        null,
+                        "date DESC LIMIT 500"
+                    )
+
+                    val currentPendingList = pendingTransactions.value
+                    val currentTransactionsList = transactions.value
+
+                    val existingBodies = (currentPendingList.map { it.messageBody } + currentTransactionsList.map { it.note }).toSet()
+
+                    val receiver = com.example.SmsReceiver()
+                    cursor?.use { c ->
+                        val addressOrdinal = c.getColumnIndex("address")
+                        val bodyOrdinal = c.getColumnIndex("body")
+                        val dateOrdinal = c.getColumnIndex("date")
+
+                        if (addressOrdinal != -1 && bodyOrdinal != -1 && dateOrdinal != -1) {
+                            while (c.moveToNext()) {
+                                val sender = c.getString(addressOrdinal) ?: "Unknown"
+                                val body = c.getString(bodyOrdinal) ?: ""
+                                val dateMillis = c.getLong(dateOrdinal)
+
+                                if (body.isNotBlank()) {
+                                    val bodyLower = body.lowercase()
+                                    if (bodyLower.contains("otp") || bodyLower.contains("verification code")) continue
+
+                                    val parsedTx = receiver.parseSms(body)
+                                    if (parsedTx != null) {
+                                        val isDuplicate = existingBodies.contains(body) ||
+                                                currentPendingList.any { it.amount == parsedTx.amount && Math.abs(it.dateMillis - dateMillis) < 5000 } ||
+                                                currentTransactionsList.any { it.amount == parsedTx.amount && Math.abs(it.dateMillis - dateMillis) < 300000 }
+
+                                        if (!isDuplicate) {
+                                            repository.insertPendingTransaction(
+                                                PendingSmsTransactionEntity(
+                                                    amount = parsedTx.amount,
+                                                    type = parsedTx.type,
+                                                    senderAddress = sender,
+                                                    messageBody = body,
+                                                    dateMillis = dateMillis,
+                                                    initialCategory = parsedTx.guessedCategory,
+                                                    payeeOrMerchant = parsedTx.payeeOrMerchant
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("FinanceViewModel", "Error scanning SMS inbox", e)
+                }
+            }
+        }
+    }
+
+    // Investment Operations
+    fun addInvestment(name: String, type: String, investedAmount: Double, currentValue: Double, dateMillis: Long, note: String = "") {
+        viewModelScope.launch {
+            repository.insertInvestment(
+                InvestmentEntity(
+                    name = name,
+                    type = type,
+                    investedAmount = investedAmount,
+                    currentValue = currentValue,
+                    dateMillis = dateMillis,
+                    note = note
+                )
+            )
+        }
+    }
+
+    fun updateInvestment(investment: InvestmentEntity) {
+        viewModelScope.launch {
+            repository.insertInvestment(investment)
+        }
+    }
+
+    fun deleteInvestment(investment: InvestmentEntity) {
+        viewModelScope.launch {
+            repository.deleteInvestment(investment)
+        }
+    }
+
+    // Goal Operations
+    fun addGoal(name: String, targetAmount: Double, currentAmount: Double, targetDateMillis: Long, category: String, note: String = "") {
+        viewModelScope.launch {
+            repository.insertGoal(
+                GoalEntity(
+                    name = name,
+                    targetAmount = targetAmount,
+                    currentAmount = currentAmount,
+                    targetDateMillis = targetDateMillis,
+                    category = category,
+                    note = note
+                )
+            )
+        }
+    }
+
+    fun updateGoal(goal: GoalEntity) {
+        viewModelScope.launch {
+            repository.insertGoal(goal)
+        }
+    }
+
+    fun deleteGoal(goal: GoalEntity) {
+        viewModelScope.launch {
+            repository.deleteGoal(goal)
+        }
+    }
+
+    fun contributeToGoal(goal: GoalEntity, amount: Double) {
+        viewModelScope.launch {
+            val updated = goal.copy(currentAmount = goal.currentAmount + amount)
+            repository.insertGoal(updated)
+            
+            // Also optional, we can create an EXPENSE transaction in category "Savings" or "Investment" if they want,
+            // but let's keep it clean as direct goal contribution first, and let them choose.
+        }
+    }
+
+    val reminderPayments: StateFlow<List<ReminderPaymentEntity>> = repository.allReminderPayments
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    // Recurring Reminders Operations
+    fun addRecurringReminder(name: String, amount: Double, dayOfMonth: Int, type: String, category: String, notes: String = "") {
+        viewModelScope.launch {
+            repository.insertRecurringReminder(
+                RecurringReminderEntity(
+                    name = name,
+                    amount = amount,
+                    dayOfMonth = dayOfMonth,
+                    type = type,
+                    lastPaidDate = null,
+                    category = category,
+                    notes = notes
+                )
+            )
+            com.example.notification.ReminderNotificationScheduler.scheduleReminderWork(
+                getApplication(),
+                name,
+                dayOfMonth,
+                amount
+            )
+        }
+    }
+
+    fun updateRecurringReminder(reminder: RecurringReminderEntity) {
+        viewModelScope.launch {
+            repository.insertRecurringReminder(reminder)
+            com.example.notification.ReminderNotificationScheduler.scheduleReminderWork(
+                getApplication(),
+                reminder.name,
+                reminder.dayOfMonth,
+                reminder.amount
+            )
+        }
+    }
+
+    fun deleteRecurringReminder(reminder: RecurringReminderEntity) {
+        viewModelScope.launch {
+            repository.deleteRecurringReminder(reminder)
+            repository.deletePaymentsForReminder(reminder.id)
+            com.example.notification.ReminderNotificationScheduler.cancelReminderWork(
+                getApplication(),
+                reminder.name
+            )
+        }
+    }
+
+    fun payRecurringReminder(
+        reminder: RecurringReminderEntity,
+        onPaymentLogged: (paymentId: Long, previousLastPaidDate: java.time.LocalDate?) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            val today = java.time.LocalDate.now()
+            val previousDate = reminder.lastPaidDate
+
+            // 1. Mark as paid
+            val updated = reminder.copy(lastPaidDate = today)
+            repository.insertRecurringReminder(updated)
+
+            // 2. Record payment history entity
+            val paymentId = repository.insertReminderPayment(
+                ReminderPaymentEntity(
+                    reminderId = reminder.id,
+                    paidDate = today,
+                    amount = reminder.amount
+                )
+            )
+
+            // 3. Log transaction expense
+            repository.insertTransaction(
+                TransactionEntity(
+                    amount = reminder.amount,
+                    type = "EXPENSE",
+                    category = reminder.category,
+                    payeeOrSource = reminder.name,
+                    note = "Recurring ${reminder.type} payment",
+                    dateMillis = System.currentTimeMillis()
+                )
+            )
+
+            onPaymentLogged(paymentId, previousDate)
+        }
+    }
+
+    fun undoPayRecurringReminder(
+        reminder: RecurringReminderEntity,
+        paymentId: Long,
+        previousLastPaidDate: java.time.LocalDate?
+    ) {
+        viewModelScope.launch {
+            // Revert lastPaidDate on reminder
+            val reverted = reminder.copy(lastPaidDate = previousLastPaidDate)
+            repository.insertRecurringReminder(reverted)
+
+            // Delete payment record
+            repository.deleteReminderPaymentById(paymentId)
+        }
+    }
+
+    suspend fun exportBackupJson(): String = withContext(Dispatchers.IO) {
+        val txs = transactions.value
+        val budg = budgets.value
+        val fuel = fuelEntries.value
+        val pending = pendingTransactions.value
+        val invs = investments.value
+        val gls = goals.value
+
+        val backup = AppBackupData(
+            transactions = txs,
+            budgets = budg,
+            fuelEntries = fuel,
+            pendingTransactions = pending,
+            investments = invs,
+            goals = gls
+        )
+
+        val moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+        val adapter = moshi.adapter(AppBackupData::class.java)
+        adapter.toJson(backup)
+    }
+
+    suspend fun importBackupJson(jsonString: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val moshi = Moshi.Builder()
+                .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+                .build()
+
+            var transactionsList: List<TransactionEntity>? = null
+            var budgetsList: List<BudgetEntity>? = null
+            var fuelEntriesList: List<FuelEntryEntity>? = null
+            var pendingSmsList: List<PendingSmsTransactionEntity>? = null
+            var investmentsList: List<InvestmentEntity>? = null
+            var goalsList: List<GoalEntity>? = null
+
+            // Fallback 1: Try full AppBackupData parsing
+            try {
+                val adapter = moshi.adapter(AppBackupData::class.java)
+                val backup = adapter.fromJson(jsonString)
+                if (backup != null) {
+                    transactionsList = backup.transactions
+                    budgetsList = backup.budgets
+                    fuelEntriesList = backup.fuelEntries
+                    pendingSmsList = backup.pendingTransactions
+                    investmentsList = backup.investments
+                    goalsList = backup.goals
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FinanceViewModel", "Backup direct parse failed, trying fallbacks", e)
+            }
+
+            // Fallback 2: Try parsing as generic Map to extract specific arrays
+            if (transactionsList == null) {
+                try {
+                    val mapType = com.squareup.moshi.Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
+                    val mapAdapter = moshi.adapter<Map<String, Any>>(mapType)
+                    val rawMap = mapAdapter.fromJson(jsonString)
+                    if (rawMap != null) {
+                        if (rawMap.containsKey("transactions")) {
+                            val txJsonStr = moshi.adapter(Any::class.java).toJson(rawMap["transactions"])
+                            val txListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, TransactionEntity::class.java)
+                            transactionsList = moshi.adapter<List<TransactionEntity>>(txListType).fromJson(txJsonStr)
+                        }
+                        if (rawMap.containsKey("budgets")) {
+                            val bgJsonStr = moshi.adapter(Any::class.java).toJson(rawMap["budgets"])
+                            val bgListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, BudgetEntity::class.java)
+                            budgetsList = moshi.adapter<List<BudgetEntity>>(bgListType).fromJson(bgJsonStr)
+                        }
+                        if (rawMap.containsKey("fuelEntries")) {
+                            val flJsonStr = moshi.adapter(Any::class.java).toJson(rawMap["fuelEntries"])
+                            val flListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, FuelEntryEntity::class.java)
+                            fuelEntriesList = moshi.adapter<List<FuelEntryEntity>>(flListType).fromJson(flJsonStr)
+                        }
+                        if (rawMap.containsKey("pendingTransactions")) {
+                            val ptJsonStr = moshi.adapter(Any::class.java).toJson(rawMap["pendingTransactions"])
+                            val ptListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, PendingSmsTransactionEntity::class.java)
+                            pendingSmsList = moshi.adapter<List<PendingSmsTransactionEntity>>(ptListType).fromJson(ptJsonStr)
+                        }
+                        if (rawMap.containsKey("investments")) {
+                            val invJsonStr = moshi.adapter(Any::class.java).toJson(rawMap["investments"])
+                            val invListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, InvestmentEntity::class.java)
+                            investmentsList = moshi.adapter<List<InvestmentEntity>>(invListType).fromJson(invJsonStr)
+                        }
+                        if (rawMap.containsKey("goals")) {
+                            val glJsonStr = moshi.adapter(Any::class.java).toJson(rawMap["goals"])
+                            val glListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, GoalEntity::class.java)
+                            goalsList = moshi.adapter<List<GoalEntity>>(glListType).fromJson(glJsonStr)
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("FinanceViewModel", "Fallback 2 parsing failed", e)
+                }
+            }
+
+            // Fallback 3: Try parsing raw JSON array of transactions directly: [{"id": 405, ...}]
+            if (transactionsList == null) {
+                try {
+                    val txListType = com.squareup.moshi.Types.newParameterizedType(List::class.java, TransactionEntity::class.java)
+                    transactionsList = moshi.adapter<List<TransactionEntity>>(txListType).fromJson(jsonString)
+                } catch (e: Exception) {
+                    android.util.Log.e("FinanceViewModel", "Fallback 3 parsing failed", e)
+                }
+            }
+
+            // If we successfully retrieved at least one populated list, import it!
+            if (transactionsList != null || budgetsList != null || fuelEntriesList != null || pendingSmsList != null || investmentsList != null || goalsList != null) {
+                repository.clearAllData()
+                repository.insertAllDataBulk(
+                    transactions = transactionsList ?: emptyList(),
+                    budgets = budgetsList ?: emptyList(),
+                    fuelEntries = fuelEntriesList ?: emptyList(),
+                    pendingSms = pendingSmsList ?: emptyList(),
+                    investments = investmentsList ?: emptyList(),
+                    goals = goalsList ?: emptyList()
+                )
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
 }
+
+@com.squareup.moshi.JsonClass(generateAdapter = true)
+data class AppBackupData(
+    val transactions: List<TransactionEntity>? = emptyList(),
+    val budgets: List<BudgetEntity>? = emptyList(),
+    val fuelEntries: List<FuelEntryEntity>? = emptyList(),
+    val pendingTransactions: List<PendingSmsTransactionEntity>? = emptyList(),
+    val investments: List<InvestmentEntity>? = emptyList(),
+    val goals: List<GoalEntity>? = emptyList()
+)
+

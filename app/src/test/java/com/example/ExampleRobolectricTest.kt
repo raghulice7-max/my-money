@@ -67,7 +67,8 @@ class ExampleRobolectricTest {
           transactions = mockTransactions,
           onAddTransaction = { _, _, _, _, _, _ -> },
           onDeleteTransaction = {},
-          onUpdateTransaction = {}
+          onUpdateTransaction = {},
+          onClearAllTransactions = {}
         )
       }
     }

@@ -1,3 +1,35 @@
 <resources>
-    <string name="app_name">Finance Tracker</string>
+    <string name="app_name">My money</string>
+    <string name="reminders_title">SIP &amp; RD Reminders</string>
+    <string name="reminders_subtitle">Track and log recurring monthly commitments</string>
+    <string name="add_new_reminder">Add New</string>
+    <string name="monthly_commitment">Monthly Commitment</string>
+    <string name="all_cleared">All Cleared!</string>
+    <string name="pending_reminders">%1$d Pending</string>
+    <string name="empty_reminders_title">Keep Investments on Schedule</string>
+    <string name="empty_reminders_desc">Setup Systematic Investment Plans (SIP) and bank Recurring Deposits (RD) to get notified and log them in 1-tap.</string>
+    <string name="due_on_day">Due on day %1$d of month</string>
+    <string name="amount_due">Amount Due</string>
+    <string name="pay_and_log">Pay &amp; Log</string>
+    <string name="paid_for_month">Paid on %1$s</string>
+    <string name="overdue_by_days">Overdue by %1$d days</string>
+    <string name="due_in_days">Due in %1$d days</string>
+    <string name="due_today">Due Today!</string>
+    <string name="undo">Undo</string>
+    <string name="payment_logged">Logged %1$s payment for %2$s!</string>
+    <string name="payment_reverted">Payment reverted for %1$s</string>
+    <string name="delete_reminder_title">Delete Reminder</string>
+    <string name="delete_reminder_message">Delete \'%1$s\'? This can\'t be undone.</string>
+    <string name="delete">Delete</string>
+    <string name="cancel">Cancel</string>
+    <string name="add_recurring_reminder">Add Recurring Reminder</string>
+    <string name="edit_reminder_details">Edit Reminder Details</string>
+    <string name="reminder_name">Reminder Name</string>
+    <string name="reminder_name_placeholder">e.g. Nippon Growth SIP, Rent, etc.</string>
+    <string name="amount">Amount</string>
+    <string name="day_of_month">Day of Month</string>
+    <string name="type">Type</string>
+    <string name="ledger_category">Ledger Category</string>
+    <string name="notes_optional">Notes (Optional)</string>
+    <string name="save">Save</string>
 </resources>

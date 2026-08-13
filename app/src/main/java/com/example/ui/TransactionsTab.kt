@@ -3,9 +3,11 @@ package com.example.ui
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import com.example.ui.theme.bounceClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,9 +35,11 @@ fun TransactionsTab(
     onAddTransaction: (Double, String, String, String, String, Long) -> Unit,
     onDeleteTransaction: (TransactionEntity) -> Unit,
     onUpdateTransaction: (TransactionEntity) -> Unit,
+    onClearAllTransactions: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
+    var showClearAllDialog by remember { mutableStateOf(false) }
     var transactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf("ALL") } // "ALL", "INCOME", "EXPENSE", "FUEL"
@@ -79,155 +83,203 @@ fun TransactionsTab(
         matchesSearch && matchesType && matchesCategory && matchesMonth
     }
 
+    val groupedTransactions = remember(filteredTransactions) {
+        filteredTransactions.groupBy { tx ->
+            val cal = Calendar.getInstance().apply { timeInMillis = tx.dateMillis }
+            cal.set(Calendar.HOUR_OF_DAY, 0)
+            cal.set(Calendar.MINUTE, 0)
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            cal.timeInMillis
+        }.toList().sortedByDescending { it.first }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .testTag("transactions_tab_root")
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("transaction_list"),
+            contentPadding = PaddingValues(bottom = 88.dp)
+        ) {
             // Search & Filter Header block
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                tonalElevation = 2.dp,
-                shadowElevation = 1.dp
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    tonalElevation = 2.dp,
+                    shadowElevation = 1.dp
                 ) {
-                    // Search Bar
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Search description, category, shops...") },
-                        leadingIcon = { Icon(Icons.Default.Search, "Search") },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Clear, "Clear")
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Logged History (${transactions.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (transactions.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { showClearAllDialog = true },
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    modifier = Modifier.testTag("delete_all_logs_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteSweep,
+                                        contentDescription = "Delete All Logs",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Delete All", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        )
-                    )
-
-                    // Type Chips filter
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("transaction_type_filter_row"),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf("ALL", "INCOME", "EXPENSE", "FUEL").forEach { type ->
-                            FilterChip(
-                                selected = selectedTypeFilter == type,
-                                onClick = {
-                                    selectedTypeFilter = type
-                                    selectedCategoryFilter = "ALL" // Reset category selection when changing main type
-                                },
-                                label = {
-                                    Text(
-                                        text = when(type) {
-                                            "ALL" -> "All"
-                                            "INCOME" -> "Incomes"
-                                            "EXPENSE" -> "Expenses"
-                                            "FUEL" -> "Fuel"
-                                            else -> type
-                                        }
-                                    )
-                                },
-                                shape = RoundedCornerShape(8.dp)
-                            )
                         }
-                    }
 
-                    // Category Filter list if not ALL or is custom
-                    val availableCategories = listOf("ALL") + FinanceCategory.categories
-                        .filter { style ->
-                            when (selectedTypeFilter) {
-                                "INCOME" -> !style.isExpense
-                                "EXPENSE" -> style.isExpense && style.name != "Fuel / Gas"
-                                "FUEL" -> style.name == "Fuel / Gas"
-                                else -> true
+                        // Search Bar
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Search description, category, shops...") },
+                            leadingIcon = { Icon(Icons.Default.Search, "Search") },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, "Clear")
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                            )
+                        )
+
+                        // Type Chips filter
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("transaction_type_filter_row"),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("ALL", "INCOME", "EXPENSE", "FUEL").forEach { type ->
+                                FilterChip(
+                                    selected = selectedTypeFilter == type,
+                                    onClick = {
+                                        selectedTypeFilter = type
+                                        selectedCategoryFilter = "ALL" // Reset category selection when changing main type
+                                    },
+                                    label = {
+                                        Text(
+                                            text = when(type) {
+                                                "ALL" -> "All"
+                                                "INCOME" -> "Incomes"
+                                                "EXPENSE" -> "Expenses"
+                                                "FUEL" -> "Fuel"
+                                                else -> type
+                                            }
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
                             }
                         }
-                        .map { it.name }
 
-                    if (availableCategories.size > 2) {
-                        ScrollableTabRow(
-                            selectedTabIndex = availableCategories.indexOf(selectedCategoryFilter).coerceAtLeast(0),
-                            edgePadding = 0.dp,
-                            containerColor = Color.Transparent,
-                            divider = {},
-                            indicator = {}
-                        ) {
-                            availableCategories.forEach { cat ->
-                                val isSelected = selectedCategoryFilter == cat
-                                Tab(
-                                    selected = isSelected,
-                                    onClick = { selectedCategoryFilter = cat },
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(
-                                                if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                        // Category Filter list if not ALL or is custom
+                        val availableCategories = listOf("ALL") + FinanceCategory.categories
+                            .filter { style ->
+                                when (selectedTypeFilter) {
+                                    "INCOME" -> !style.isExpense
+                                    "EXPENSE" -> style.isExpense && style.name != "Fuel / Gas"
+                                    "FUEL" -> style.name == "Fuel / Gas"
+                                    else -> true
+                                }
+                            }
+                            .map { it.name }
+
+                        if (availableCategories.size > 2) {
+                            ScrollableTabRow(
+                                selectedTabIndex = availableCategories.indexOf(selectedCategoryFilter).coerceAtLeast(0),
+                                edgePadding = 0.dp,
+                                containerColor = Color.Transparent,
+                                divider = {},
+                                indicator = {}
+                            ) {
+                                availableCategories.forEach { cat ->
+                                    val isSelected = selectedCategoryFilter == cat
+                                    Tab(
+                                        selected = isSelected,
+                                        onClick = { selectedCategoryFilter = cat },
+                                        modifier = Modifier.padding(bottom = 8.dp)
                                     ) {
-                                        Text(
-                                            text = cat,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(
+                                                    if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                                )
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = cat,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Month Filter Chips Row
-                    if (availableMonths.size > 2) {
-                        ScrollableTabRow(
-                            selectedTabIndex = availableMonths.indexOfFirst { it.first == selectedMonthFilter }.coerceAtLeast(0),
-                            edgePadding = 0.dp,
-                            containerColor = Color.Transparent,
-                            divider = {},
-                            indicator = {}
-                        ) {
-                            availableMonths.forEach { (key, display) ->
-                                val isSelected = selectedMonthFilter == key
-                                Tab(
-                                    selected = isSelected,
-                                    onClick = { selectedMonthFilter = key },
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(
-                                                if (isSelected) MaterialTheme.colorScheme.secondaryContainer
-                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                        // Month Filter Chips Row
+                        if (availableMonths.size > 2) {
+                            ScrollableTabRow(
+                                selectedTabIndex = availableMonths.indexOfFirst { it.first == selectedMonthFilter }.coerceAtLeast(0),
+                                edgePadding = 0.dp,
+                                containerColor = Color.Transparent,
+                                divider = {},
+                                indicator = {}
+                            ) {
+                                availableMonths.forEach { (key, display) ->
+                                    val isSelected = selectedMonthFilter == key
+                                    Tab(
+                                        selected = isSelected,
+                                        onClick = { selectedMonthFilter = key },
+                                        modifier = Modifier.padding(bottom = 8.dp)
                                     ) {
-                                        Text(
-                                            text = display,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(
+                                                    if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                                )
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = display,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -238,47 +290,46 @@ fun TransactionsTab(
 
             // Results Log
             if (filteredTransactions.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(32.dp)
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 280.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Category,
-                            contentDescription = "Empty",
-                            tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No matches found",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Try clearing filters or search terms",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Category,
+                                contentDescription = "Empty",
+                                tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                modifier = Modifier.size(64.dp)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "No matches found",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Try clearing filters or search terms",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .testTag("transaction_list"),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(filteredTransactions, key = { tx -> "${tx.id}_${tx.dateMillis}_${tx.amount}" }) { tx ->
+                groupedTransactions.forEach { (dateMillis, txList) ->
+                    item(key = "header_$dateMillis") {
+                        DateGroupHeader(dateMillis = dateMillis)
+                    }
+
+                    itemsIndexed(txList, key = { _, tx -> "${tx.id}_${tx.dateMillis}_${tx.amount}" }) { index, tx ->
                         val style = FinanceCategory.getStyleFor(tx.category)
                         DeletableTransactionItem(
                             transaction = tx,
@@ -286,6 +337,14 @@ fun TransactionsTab(
                             onEdit = { transactionToEdit = tx },
                             onDelete = { onDeleteTransaction(tx) }
                         )
+
+                        if (index < txList.size - 1) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 76.dp, end = 16.dp),
+                                thickness = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
+                        }
                     }
                 }
             }
@@ -312,9 +371,33 @@ fun TransactionsTab(
         var amountText by remember(editingTx) { mutableStateOf(editingTx.amount.toString()) }
         var payeeText by remember(editingTx) { mutableStateOf(editingTx.payeeOrSource) }
         var selectedCategory by remember(editingTx) { mutableStateOf(editingTx.category) }
-        var notesText by remember(editingTx) { mutableStateOf(editingTx.note) }
+        
+        var paymentMethod by remember(editingTx) {
+            mutableStateOf(
+                when {
+                    editingTx.note.startsWith("[Card] ") || editingTx.note == "[Card]" -> "Card"
+                    editingTx.note.startsWith("[Wallet] ") || editingTx.note == "[Wallet]" -> "Wallet"
+                    editingTx.category == "Salary" || editingTx.category == "Investment" || editingTx.category == "Savings" || editingTx.category == "Business & Freelance" -> "Card"
+                    editingTx.category == "Snacks" || editingTx.category == "Groceries" || editingTx.category == "Food & Dining" || editingTx.category == "Other" -> "Wallet"
+                    else -> "Card"
+                }
+            )
+        }
+
+        var notesText by remember(editingTx) {
+            mutableStateOf(
+                when {
+                    editingTx.note.startsWith("[Card] ") -> editingTx.note.removePrefix("[Card] ")
+                    editingTx.note.startsWith("[Wallet] ") -> editingTx.note.removePrefix("[Wallet] ")
+                    editingTx.note == "[Card]" || editingTx.note == "[Wallet]" -> ""
+                    else -> editingTx.note
+                }
+            )
+        }
+
         var selectedDateMillis by remember(editingTx) { mutableStateOf(editingTx.dateMillis) }
         var showDatePicker by remember { mutableStateOf(false) }
+        var showTimePicker by remember { mutableStateOf(false) }
 
         val sdf = remember { SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()) }
         val dateText = sdf.format(Date(selectedDateMillis))
@@ -402,58 +485,144 @@ fun TransactionsTab(
                         CustomCalendarDatePicker(
                             selectedDateMillis = selectedDateMillis,
                             onDateSelected = { selected ->
-                                selectedDateMillis = selected
+                                val prevCal = Calendar.getInstance().apply { timeInMillis = selectedDateMillis }
+                                val newCal = Calendar.getInstance().apply {
+                                    timeInMillis = selected
+                                    set(Calendar.HOUR_OF_DAY, prevCal.get(Calendar.HOUR_OF_DAY))
+                                    set(Calendar.MINUTE, prevCal.get(Calendar.MINUTE))
+                                    set(Calendar.SECOND, prevCal.get(Calendar.SECOND))
+                                    set(Calendar.MILLISECOND, prevCal.get(Calendar.MILLISECOND))
+                                }
+                                selectedDateMillis = newCal.timeInMillis
                                 showDatePicker = false
                             },
                             onDismiss = { showDatePicker = false }
                         )
                     }
 
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CalendarToday,
-                                contentDescription = "Date",
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Transaction Date",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                                .clickable { showDatePicker = true }
-                                .clip(RoundedCornerShape(8.dp)),
-                            color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
-                            border = CardDefaults.outlinedCardBorder()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = dateText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                    if (showTimePicker) {
+                        CustomTimePickerDialog(
+                            initialTimeMillis = selectedDateMillis,
+                            onTimeSelected = { h, m ->
+                                val updatedCal = Calendar.getInstance().apply {
+                                    timeInMillis = selectedDateMillis
+                                    set(Calendar.HOUR_OF_DAY, h)
+                                    set(Calendar.MINUTE, m)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
+                                selectedDateMillis = updatedCal.timeInMillis
+                                showTimePicker = false
+                            },
+                            onDismiss = { showTimePicker = false }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Date Column
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = "Select Date",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                                    imageVector = Icons.Default.CalendarToday,
+                                    contentDescription = "Date",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Date",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .clickable { showDatePicker = true }
+                                    .clip(RoundedCornerShape(8.dp)),
+                                color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                                border = CardDefaults.outlinedCardBorder()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = dateText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = "Select Date",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Time Column
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Time",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Time",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            
+                            val timeFormatter = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+                            val timeText = timeFormatter.format(Date(selectedDateMillis))
+                            
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .clickable { showTimePicker = true }
+                                    .clip(RoundedCornerShape(8.dp)),
+                                color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                                border = CardDefaults.outlinedCardBorder()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = timeText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = "Select Time",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -501,6 +670,62 @@ fun TransactionsTab(
                         }
                     }
 
+                    // Payment Method Row Selection
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Payment Method",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            listOf("Card", "Wallet").forEach { method ->
+                                val isSelected = paymentMethod == method
+                                val icon = if (method == "Card") Icons.Default.CreditCard else Icons.Default.AccountBalanceWallet
+                                val activeColor = if (method == "Card") Color(0xFFEF5350) else Color(0xFFFFA726)
+                                
+                                OutlinedCard(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .clickable { paymentMethod = method },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = CardDefaults.outlinedCardColors(
+                                        containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                                    ),
+                                    border = CardDefaults.outlinedCardBorder().copy(
+                                        brush = androidx.compose.ui.graphics.SolidColor(
+                                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                        )
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = method,
+                                            tint = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = method,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Notes text box
                     OutlinedTextField(
                         value = notesText,
@@ -518,13 +743,14 @@ fun TransactionsTab(
                         val amount = amountText.toDoubleOrNull()
                         val payee = payeeText.ifBlank { if (txType == "INCOME") "Received Funds" else "General Expense" }
                         if (amount != null && amount > 0) {
+                            val finalNote = if (notesText.isBlank()) "[$paymentMethod]" else "[$paymentMethod] $notesText"
                             onUpdateTransaction(
                                 editingTx.copy(
                                     amount = amount,
                                     type = txType,
                                     category = selectedCategory,
                                     payeeOrSource = payee,
-                                    note = notesText,
+                                    note = finalNote,
                                     dateMillis = selectedDateMillis
                                 )
                             )
@@ -549,9 +775,11 @@ fun TransactionsTab(
         var amountText by remember { mutableStateOf("") }
         var payeeText by remember { mutableStateOf("") }
         var selectedCategory by remember { mutableStateOf("") }
+        var paymentMethod by remember { mutableStateOf("Card") }
         var notesText by remember { mutableStateOf("") }
         var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
         var showDatePicker by remember { mutableStateOf(false) }
+        var showTimePicker by remember { mutableStateOf(false) }
 
         val sdf = remember { SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()) }
         val dateText = sdf.format(Date(selectedDateMillis))
@@ -581,6 +809,80 @@ fun TransactionsTab(
                         .background(Color.Transparent),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Auto-Fill pasting SMS helper
+                    var showPasteBox by remember { mutableStateOf(false) }
+                    var pasteText by remember { mutableStateOf("") }
+
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showPasteBox = !showPasteBox }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Sms,
+                                    contentDescription = "SMS icon",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Have SMS / Bank message?",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                text = if (showPasteBox) "Hide" else "Auto-Fill with SMS",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+
+                        if (showPasteBox) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = pasteText,
+                                onValueChange = { pasteText = it },
+                                label = { Text("Paste Bank Message Body") },
+                                placeholder = { Text("e.g. Rs.55.00 spent on your SBI Credit Card...") },
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 3,
+                                trailingIcon = {
+                                    if (pasteText.isNotBlank()) {
+                                        IconButton(
+                                            onClick = {
+                                                val parsed = com.example.SmsReceiver().parseSms(pasteText)
+                                                if (parsed != null) {
+                                                    txType = parsed.type
+                                                    amountText = parsed.amount.toString()
+                                                    payeeText = parsed.payeeOrMerchant
+                                                    selectedCategory = parsed.guessedCategory
+                                                    pasteText = ""
+                                                    showPasteBox = false
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.AutoAwesome,
+                                                contentDescription = "Apply Parse",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
                     // Type Row Selection
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -636,58 +938,144 @@ fun TransactionsTab(
                         CustomCalendarDatePicker(
                             selectedDateMillis = selectedDateMillis,
                             onDateSelected = { selected ->
-                                selectedDateMillis = selected
+                                val prevCal = Calendar.getInstance().apply { timeInMillis = selectedDateMillis }
+                                val newCal = Calendar.getInstance().apply {
+                                    timeInMillis = selected
+                                    set(Calendar.HOUR_OF_DAY, prevCal.get(Calendar.HOUR_OF_DAY))
+                                    set(Calendar.MINUTE, prevCal.get(Calendar.MINUTE))
+                                    set(Calendar.SECOND, prevCal.get(Calendar.SECOND))
+                                    set(Calendar.MILLISECOND, prevCal.get(Calendar.MILLISECOND))
+                                }
+                                selectedDateMillis = newCal.timeInMillis
                                 showDatePicker = false
                             },
                             onDismiss = { showDatePicker = false }
                         )
                     }
 
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CalendarToday,
-                                contentDescription = "Date",
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Transaction Date",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                                .clickable { showDatePicker = true }
-                                .clip(RoundedCornerShape(8.dp)),
-                            color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
-                            border = CardDefaults.outlinedCardBorder()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = dateText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                    if (showTimePicker) {
+                        CustomTimePickerDialog(
+                            initialTimeMillis = selectedDateMillis,
+                            onTimeSelected = { h, m ->
+                                val updatedCal = Calendar.getInstance().apply {
+                                    timeInMillis = selectedDateMillis
+                                    set(Calendar.HOUR_OF_DAY, h)
+                                    set(Calendar.MINUTE, m)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
+                                selectedDateMillis = updatedCal.timeInMillis
+                                showTimePicker = false
+                            },
+                            onDismiss = { showTimePicker = false }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Date Column
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = "Select Date",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                                    imageVector = Icons.Default.CalendarToday,
+                                    contentDescription = "Date",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Date",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .clickable { showDatePicker = true }
+                                    .clip(RoundedCornerShape(8.dp)),
+                                color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                                border = CardDefaults.outlinedCardBorder()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = dateText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = "Select Date",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Time Column
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Time",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Time",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            
+                            val timeFormatter = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+                            val timeText = timeFormatter.format(Date(selectedDateMillis))
+                            
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .clickable { showTimePicker = true }
+                                    .clip(RoundedCornerShape(8.dp)),
+                                color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+                                border = CardDefaults.outlinedCardBorder()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = timeText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = "Select Time",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -731,6 +1119,62 @@ fun TransactionsTab(
                         }
                     }
 
+                    // Payment Method Row Selection
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Payment Method",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            listOf("Card", "Wallet").forEach { method ->
+                                val isSelected = paymentMethod == method
+                                val icon = if (method == "Card") Icons.Default.CreditCard else Icons.Default.AccountBalanceWallet
+                                val activeColor = if (method == "Card") Color(0xFFEF5350) else Color(0xFFFFA726)
+                                
+                                OutlinedCard(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .clickable { paymentMethod = method },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = CardDefaults.outlinedCardColors(
+                                        containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                                    ),
+                                    border = CardDefaults.outlinedCardBorder().copy(
+                                        brush = androidx.compose.ui.graphics.SolidColor(
+                                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                        )
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = method,
+                                            tint = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = method,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Optional Notes text box
                     OutlinedTextField(
                         value = notesText,
@@ -748,12 +1192,13 @@ fun TransactionsTab(
                         val amount = amountText.toDoubleOrNull()
                         val payee = payeeText.ifBlank { if (txType == "INCOME") "Received Funds" else "General Expense" }
                         if (amount != null && amount > 0) {
+                            val finalNote = if (notesText.isBlank()) "[$paymentMethod]" else "[$paymentMethod] $notesText"
                             onAddTransaction(
                                 amount,
                                 txType,
                                 selectedCategory,
                                 payee,
-                                notesText,
+                                finalNote,
                                 selectedDateMillis
                             )
                             showAddDialog = false
@@ -770,6 +1215,31 @@ fun TransactionsTab(
             }
         )
     }
+
+    // Delete All Confirmation Dialog
+    if (showClearAllDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAllDialog = false },
+            title = { Text("Delete All Logs", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to permanently delete ALL logged transactions? This will erase all history and is completely irreversible.") },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    onClick = {
+                        onClearAllTransactions()
+                        showClearAllDialog = false
+                    }
+                ) {
+                    Text("Delete All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -780,31 +1250,48 @@ fun DeletableTransactionItem(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val formatter = remember { SimpleDateFormat("MMM d, yyyy • h:mm a", Locale.getDefault()) }
-    val dateString = formatter.format(Date(transaction.dateMillis))
+    val formatter = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+    val timeString = formatter.format(Date(transaction.dateMillis))
 
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+    // Parse the paymentMethod and cleanNote from note
+    val (paymentMethod, cleanNote) = remember(transaction.note) {
+        when {
+            transaction.note.startsWith("[Card] ") -> "Card" to transaction.note.removePrefix("[Card] ")
+            transaction.note.startsWith("[Wallet] ") -> "Wallet" to transaction.note.removePrefix("[Wallet] ")
+            transaction.note == "[Card]" -> "Card" to ""
+            transaction.note == "[Wallet]" -> "Wallet" to ""
+            // Default heuristics:
+            transaction.category == "Salary" || transaction.category == "Investment" || transaction.category == "Savings" || transaction.category == "Business & Freelance" -> "Card" to transaction.note
+            transaction.category == "Snacks" || transaction.category == "Groceries" || transaction.category == "Food & Dining" || transaction.category == "Other" -> "Wallet" to transaction.note
+            else -> "Card" to transaction.note
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .bounceClickable { onEdit() }
+            .padding(vertical = 2.dp)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon
+            // Icon - solid primary category color background with clean white icon inside
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .background(categoryStyle.color.copy(alpha = 0.15f), CircleShape),
+                    .background(categoryStyle.color, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = categoryStyle.icon,
                     contentDescription = transaction.category,
-                    tint = categoryStyle.color,
+                    tint = Color.White,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -815,70 +1302,92 @@ fun DeletableTransactionItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = transaction.payeeOrSource,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 )
-                Text(
-                    text = dateString,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (transaction.note.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Payment Method Badge
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (paymentMethod == "Card") Icons.Default.CreditCard else Icons.Default.AccountBalanceWallet,
+                            contentDescription = paymentMethod,
+                            tint = if (paymentMethod == "Card") Color(0xFFEF5350) else Color(0xFFFFA726),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = paymentMethod,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Details text with bullet spacing separator
+                    val detailsText = prepDetailsString(timeString, cleanNote)
                     Text(
-                        text = transaction.note,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        text = detailsText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            // Amount and Action combo
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.Center
+            // Right column: Amount & Action options
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 val prefix = if (transaction.type == "INCOME") "+" else "-"
-                val amtColor = if (transaction.type == "INCOME") Color(0xFF43A047) else MaterialTheme.colorScheme.onSurface
+                val amtColor = if (transaction.type == "INCOME") Color(0xFF43A047) else Color(0xFFE53935)
+                
                 Text(
                     text = "$prefix${formatCurrency(transaction.amount)}",
                     fontWeight = FontWeight.ExtraBold,
                     color = amtColor,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp)
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { onEdit() },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("edit_transaction_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Edit",
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                Spacer(modifier = Modifier.width(4.dp))
 
-                    IconButton(
-                        onClick = { showDeleteConfirmDialog = true },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("delete_transaction_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = { onEdit() },
+                    modifier = Modifier.size(32.dp).testTag("edit_transaction_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit",
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { showDeleteConfirmDialog = true },
+                    modifier = Modifier.size(32.dp).testTag("delete_transaction_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
         }
@@ -907,6 +1416,40 @@ fun DeletableTransactionItem(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun DateGroupHeader(dateMillis: Long, modifier: Modifier = Modifier) {
+    val headerFormatter = remember { SimpleDateFormat("MMM dd, EEEE", Locale.getDefault()) }
+    val displayText = headerFormatter.format(Date(dateMillis))
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 18.dp, start = 16.dp, end = 16.dp, bottom = 4.dp)
+    ) {
+        Text(
+            text = displayText,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.primary
+            ),
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+        )
+    }
+}
+
+fun prepDetailsString(time: String, note: String): String {
+    return if (note.isNotBlank()) {
+        "•  $time  •  $note"
+    } else {
+        "•  $time"
     }
 }
 

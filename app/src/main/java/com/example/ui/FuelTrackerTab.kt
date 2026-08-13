@@ -4,6 +4,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import com.example.ui.theme.bounceClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -739,7 +740,9 @@ fun FuelHistoryItem(
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .bounceClickable { onEdit() },
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
         border = CardDefaults.outlinedCardBorder()

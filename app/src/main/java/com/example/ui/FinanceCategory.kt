@@ -15,6 +15,7 @@ data class CategoryStyle(
 object FinanceCategory {
     val SALARY = "Salary"
     val INVESTMENT = "Investment"
+    val SAVINGS = "Savings"
     val GIFT = "Gift"
     val BUSINESS_FREELANCE = "Business & Freelance"
     val FOOD_DINING = "Food & Dining"
@@ -34,6 +35,7 @@ object FinanceCategory {
     val categories = listOf(
         CategoryStyle(SALARY, Color(0xFF4CAF50), Icons.Default.AttachMoney, false),
         CategoryStyle(INVESTMENT, Color(0xFF009688), Icons.Default.TrendingUp, false),
+        CategoryStyle(SAVINGS, Color(0xFF3F51B5), Icons.Default.Savings, false),
         CategoryStyle(GIFT, Color(0xFFFF9800), Icons.Default.CardGiftcard, false),
         CategoryStyle(BUSINESS_FREELANCE, Color(0xFF00C853), Icons.Default.Computer, false),
         CategoryStyle(FOOD_DINING, Color(0xFFFF5722), Icons.Default.Restaurant, true),
@@ -48,6 +50,8 @@ object FinanceCategory {
         CategoryStyle(EDUCATION, Color(0xFF8D6E63), Icons.Default.School, true),
         CategoryStyle(SUBSCRIPTIONS, Color(0xFFAB47BC), Icons.Default.Subscriptions, true),
         CategoryStyle(INSURANCE_TAX, Color(0xFF607D8B), Icons.Default.Security, true),
+        CategoryStyle(INVESTMENT, Color(0xFF009688), Icons.Default.TrendingUp, true),
+        CategoryStyle(SAVINGS, Color(0xFF3F51B5), Icons.Default.Savings, true),
         CategoryStyle(OTHER, Color(0xFF9E9E9E), Icons.Default.Category, true)
     )
 
